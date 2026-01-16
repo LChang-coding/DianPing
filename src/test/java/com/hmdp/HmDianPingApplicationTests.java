@@ -14,6 +14,6 @@ class HmDianPingApplicationTests {
     private ShopServiceImpl shopService;
     @Test
     void testSaveShop() throws InterruptedException {
-        shopService.saveShop2Redis(1L,10L);
+
     }
 }

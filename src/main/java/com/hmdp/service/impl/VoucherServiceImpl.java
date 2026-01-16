@@ -37,7 +37,7 @@ public class VoucherServiceImpl extends ServiceImpl<VoucherMapper, Voucher> impl
 
     @Override
     @Transactional
-    public void addSeckillVoucher(Voucher voucher) {
+    public void    addSeckillVoucher(Voucher voucher) {
         // 保存优惠券
         save(voucher);
         // 保存秒杀信息
