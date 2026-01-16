@@ -9,6 +9,7 @@ import com.hmdp.service.IVoucherOrderService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.utils.RedisIdWorker;
 import com.hmdp.utils.UserHolder;
+import org.springframework.aop.framework.AopContext;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,7 +32,6 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     private ISeckillVoucherService seckillVoucherService;// 注入秒杀优惠券服务
 
     @Override
-    @Transactional
     public Result seckillVoucher(Long voucherId) {
         // 查询优惠卷
         SeckillVoucher voucher = seckillVoucherService.getById(voucherId);
@@ -48,9 +48,25 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         if(voucher.getStock()<1){
             return Result.fail("库存不足");
         }
+        Long userId= UserHolder.getUser().getId();
+        synchronized(userId.toString().intern()){//将 该方法上锁 确保spring事务生效之后同步锁才被释放
+            /*这段代码用 synchronized(userId.toString().intern()) 做*按用户维度*的互斥：
+*同一用户*的并发请求会竞争同一把锁，保证 查是否已下单 \-> 扣库存 \-> 写订单 这段逻辑串行执行，从而避免同一用户重复下单。
+只在*单 JVM*内有效；多实例部署时不同机器/进程之间不会互斥，需要分布式锁或数据库唯一约束兜底。
+intern() 用来确保相同 userId 得到的是*同一个锁对象*；但大量不同 userId 可能增加常量池压力、锁对象生命周期更长*/
+            IVoucherOrderService proxy = (IVoucherOrderService) AopContext.currentProxy();//这行代码用于获取当前正在执行该方法的 Spring AOP 代理对象，并把它转换成 IVoucherOrderService 接口类型
+            return proxy.createVoucherOrder(voucherId);}
+    }
+    @Transactional
+    public  Result createVoucherOrder(Long voucherId){  //一人一单
+        Long userId= UserHolder.getUser().getId();
 
+        int count=query().eq("user_id",userId).eq("voucher_id",voucherId).count();
+        if (count>0){
+            return Result.fail("用户已经购买过一次");
+        }
         //扣减库存
-               boolean success=seckillVoucherService.update().setSql("stock=stock-1")
+        boolean success=seckillVoucherService.update().setSql("stock=stock-1")
                 .eq("voucher_id",voucherId).gt("stock",0)
                 .update();
         if(!success){
@@ -61,12 +77,10 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         //订单id
         long orderId= redisIdWorker.nextId("order");
         voucherOrder.setId(orderId);
-        //用户id
-        Long userId= UserHolder.getUser().getId();
         voucherOrder.setUserId(userId);
         //代金券id
         voucherOrder.setVoucherId(voucherId);
         save(voucherOrder);
-        return Result.ok(orderId);
+        return Result.ok(voucherId);
     }
 }
